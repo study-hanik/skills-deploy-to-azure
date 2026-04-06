@@ -1,0 +1,79 @@
+name: Step 0, 환영합니다
+
+# 이 단계는 학습자가 템플릿에서 새 저장소를 생성한 후 트리거됩니다
+# 이 워크플로우는 step 0에서 step 1로 업데이트합니다.
+
+# 템플릿에서 저장소를 생성할 때 이벤트 발생 순서와 타이밍,
+# 워크플로우 트리거 등록에 변동이 있을 수 있습니다.
+# 따라서 이 워크플로우가 항상 트리거되도록 의도적으로 넓은 트리거를 사용합니다.
+# on_start 작업 내의 조건은 한 번만 완전히 실행되도록 보장합니다.
+# 참고: https://docs.github.com/en/actions/learn-github-actions/events-that-trigger-workflows
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  # Need `contents: read` to checkout the repository.
+  # Need `contents: write` to update the step metadata.
+  contents: write
+
+jobs:
+  # Get the current step to only run the main job when the learner is on the same step.
+  get_current_step:
+    name: Check current step number
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - id: get_step
+        run: |
+          echo "current_step=$(cat ./.github/steps/-step.txt)" >> $GITHUB_OUTPUT
+    outputs:
+      current_step: ${{ steps.get_step.outputs.current_step }}
+
+  on_start:
+    name: 시작
+    needs: get_current_step
+
+    # We will only run this action when:
+    # 1. This repository isn't the template repository.
+    # 2. The step is currently 0.
+    # Reference: https://docs.github.com/en/actions/learn-github-actions/contexts
+    # Reference: https://docs.github.com/en/actions/learn-github-actions/expressions
+    if: >-
+      ${{ !github.event.repository.is_template
+          && needs.get_current_step.outputs.current_step == 0 }}
+
+    # We'll run Ubuntu for performance instead of Mac or Windows.
+    runs-on: ubuntu-latest
+
+    steps:
+      # We'll need to check out the repository so that we can edit the README.
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Let's get all the branches.
+
+      # README를 step 0에서 step 1로 업데이트합니다.
+      - name: step 1로 업데이트
+        uses: skills/action-update-step@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          from_step: 0
+          to_step: 1
+
+      # 템플릿 저장소에서 생성된 후 브랜치의 관련 히스토리를 설정하는 데 필요합니다.
+      - name: 저장소 초기화
+        run: ./.github/script/initialize-repository.sh --dry-run=false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Workshop Tracker: 시작 이벤트 전송
+      - name: Workshop Tracker 이벤트 전송
+        if: always()
+        run: |
+          curl -X POST -H "Content-Type: application/json" \
+            -d '{"sessionId": "'"${{ secrets.WORKSHOP_SESSION_ID }}"'", "track": "deploy-to-azure", "eventType": "start", "step": 0, "repository": "'"${{ github.repository }}"'"}' \
+            https://workshop-tracker-api.jollyocean-9c92d5de.koreacentral.azurecontainerapps.io/api/events || true

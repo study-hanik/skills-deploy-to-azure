@@ -1,0 +1,87 @@
+name: Step 3, 환경 구축하기
+
+# 이 워크플로우는 step 3에서 step 4로 업데이트합니다.
+
+# azure-configuration 브랜치에서 "Configure Azure environment" 워크플로우가
+# 완료된 후 실행됩니다.
+# 참고: https://docs.github.com/en/actions/learn-github-actions/events-that-trigger-workflows
+on:
+  workflow_dispatch:
+  workflow_run:
+    workflows: ["Configure Azure environment"]
+    types: [completed]
+    branches: [azure-configuration]
+
+permissions:
+  # Need `contents: read` to checkout the repository.
+  # Need `contents: write` to update the step metadata.
+  contents: write
+  pull-requests: write
+
+jobs:
+  # Get the current step to only run the main job when the learner is on the same step.
+  get_current_step:
+    name: Check current step number
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - id: get_step
+        run: |
+          echo "current_step=$(cat ./.github/steps/-step.txt)" >> $GITHUB_OUTPUT
+    outputs:
+      current_step: ${{ steps.get_step.outputs.current_step }}
+
+  on_push:
+    name: azure-configuration 푸시 확인
+    needs: get_current_step
+
+    # We will only run this action when:
+    # 1. This repository isn't the template repository.
+    # 2. The step is currently 3.
+    # Reference: https://docs.github.com/en/actions/learn-github-actions/contexts
+    # Reference: https://docs.github.com/en/actions/learn-github-actions/expressions
+    if: >-
+      ${{ !github.event.repository.is_template
+          && needs.get_current_step.outputs.current_step == 3 }}
+
+    # We'll run Ubuntu for performance instead of Mac or Windows.
+    runs-on: ubuntu-latest
+
+    steps:
+      # We'll need to check out the repository so that we can edit the README.
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Let's get all the branches.
+
+      # 열린 풀 리퀘스트를 병합합니다.
+      - name: 풀 리퀘스트 병합
+        run: gh pr merge --squash azure-configuration
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # main을 풀합니다.
+      - name: main 풀
+        run: |
+          chmod +x ./.github/script/initialize-repository.sh
+          ./.github/script/initialize-repository.sh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # README.md에서 step 3을 step 4로 전환합니다.
+      - name: step 4로 업데이트
+        uses: skills/action-update-step@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          from_step: 3
+          to_step: 4
+          branch_name: azure-configuration
+
+      # Workshop Tracker: 단계 이벤트 전송
+      - name: Workshop Tracker 이벤트 전송
+        if: always()
+        run: |
+          curl -X POST -H "Content-Type: application/json" \
+            -d '{"sessionId": "'"${{ secrets.WORKSHOP_SESSION_ID }}"'", "track": "deploy-to-azure", "eventType": "step", "step": 3, "repository": "'"${{ github.repository }}"'"}' \
+            https://workshop-tracker-api.jollyocean-9c92d5de.koreacentral.azurecontainerapps.io/api/events || true
